@@ -109,9 +109,7 @@ main(int argc, char **argv)
         sentry_set_transaction("test-transaction");
         sentry_set_level(SENTRY_LEVEL_WARNING);
         sentry_set_extra("extra stuff", sentry_value_new_string("some value"));
-        sentry_set_extra("…unicode key…",
-            // https://xkcd.com/1813/ :-)
-            sentry_value_new_string("őá…–🤮🚀¿ 한글 테스트"));
+        sentry_set_extra("unicode key", sentry_value_new_string("sommmm value"));
         sentry_set_tag("expected-tag", "some value");
         sentry_set_tag("not-expected-tag", "some value");
         sentry_remove_tag("not-expected-tag");
