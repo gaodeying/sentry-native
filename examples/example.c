@@ -9,6 +9,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "sentry_backend_crashpad_gaotest.h"
+
 #ifdef NDEBUG
 #    undef NDEBUG
 #endif
@@ -63,7 +66,17 @@ trigger_crash()
 int
 main(int argc, char **argv)
 {
+
     sentry_options_t *options = sentry_options_new();
+
+    // winpos: test
+    sentry_options_set_insertDllNameToNameList(options, "jvm222.dll");
+    sentry_options_set_insertDllNameToNameList(options, "jvm222.dll");
+    sentry_options_set_insertDllNameToNameList(options, "jvm222.dll");
+    sentry_options_set_insertDllNameToNameList(options, "jvm222.dll");
+    sentry_options_set_insertDllNameToNameList(options, "jvm221.dll");
+
+    printerTest();
 
     // this is an example. for real usage, make sure to set this explicitly to
     // an app specific cache location.

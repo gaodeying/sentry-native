@@ -1028,10 +1028,18 @@ SENTRY_API void sentry_options_set_shutdown_timeout(
     sentry_options_t *opts, uint64_t shutdown_timeout);
 
 /**
+ * winpos: set dllName to list
+ *
+ */
+SENTRY_API void sentry_options_set_insertDllNameToNameList(
+    sentry_options_t *opts, char *dllName);
+
+/**
  * Gets the maximum time (in milliseconds) to wait for the asynchronous tasks to
  * end on shutdown, before attempting a forced termination.
  */
 SENTRY_API uint64_t sentry_options_get_shutdown_timeout(sentry_options_t *opts);
+
 
 /* -- Global APIs -- */
 

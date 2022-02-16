@@ -2,7 +2,6 @@
 #define SENTRY_OPTIONS_H_INCLUDED
 
 #include "sentry_boot.h"
-
 #include "sentry_logger.h"
 #include "sentry_session.h"
 #include "sentry_utils.h"
@@ -69,6 +68,10 @@ typedef struct sentry_options_s {
     long user_consent;
     long refcount;
     uint64_t shutdown_timeout;
+
+    /* winpos: maintain dll names */
+    sentry_value_t dllNames; 
+
 } sentry_options_t;
 
 /**

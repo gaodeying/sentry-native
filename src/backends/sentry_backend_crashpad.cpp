@@ -33,6 +33,11 @@ extern "C" {
 #include "client/crashpad_info.h"
 #include "client/settings.h"
 
+#include <windows.h>
+#include <tchar.h>
+#include <stdio.h>
+#include <psapi.h>
+
 #if defined(__GNUC__)
 #    pragma GCC diagnostic pop
 #elif defined(_MSC_VER)
@@ -46,6 +51,7 @@ extern "C" {
 static stack_t g_signal_stack;
 
 #    include "util/posix/signals.h"
+#include <Psapi.h>
 
 // This list was taken from crashpad's util/posix/signals.cc file
 // and is used to know which signals we need to reset to default
@@ -118,10 +124,156 @@ sentry__crashpad_backend_flush_scope(
     }
 }
 
+void
+printerCurrentReceiveException(EXCEPTION_POINTERS *exception_pointers)
+{
+    printf("[winpos_crashpadCliet]-ExceptionCode %8x (%lu) \n",
+        exception_pointers->ExceptionRecord->ExceptionCode,
+        exception_pointers->ExceptionRecord->ExceptionCode);
+
+    DWORD addr = (DWORD)exception_pointers->ExceptionRecord->ExceptionAddress;
+    printf("[winpos_crashpadCliet]-ExceptionAddress %p (%lu) \n",
+        exception_pointers->ExceptionRecord->ExceptionAddress, addr);
+}
+
+DWORD
+GetModuleLen(HMODULE hModule)
+{
+    PBYTE pImage = (PBYTE)hModule;
+    PIMAGE_DOS_HEADER pImageDosHeader;
+    PIMAGE_NT_HEADERS pImageNtHeader;
+    pImageDosHeader = (PIMAGE_DOS_HEADER)pImage;
+    if (pImageDosHeader->e_magic != IMAGE_DOS_SIGNATURE) {
+        return 0;
+    }
+    pImageNtHeader = (PIMAGE_NT_HEADERS)&pImage[pImageDosHeader->e_lfanew];
+    if (pImageNtHeader->Signature != IMAGE_NT_SIGNATURE) {
+        return 0;
+    }
+    return pImageNtHeader->OptionalHeader.SizeOfImage;
+}
+
+bool
+isCrashInThisModule(EXCEPTION_POINTERS *ExceptionInfo, _In_opt_ LPCSTR muduleName)
+{
+    HMODULE hDll = GetModuleHandle(muduleName);
+    if (hDll != NULL) {
+        DWORD moduleLen = GetModuleLen(hDll);
+        printf("模块名称: %s, 基址1: %p, 长度: %lu \n", muduleName, hDll,
+            moduleLen);
+
+        DWORD addrBegain = (DWORD)hDll;
+        DWORD addrEnd = (DWORD)hDll + moduleLen;
+        DWORD exceptionAddr
+            = (DWORD)(ExceptionInfo->ExceptionRecord->ExceptionAddress);
+        printf("模块名称: %s, addrBegain: %lu, addrEnd: %lu, exceptionAddr: "
+               "%lu \n",
+            muduleName, addrBegain, addrEnd, exceptionAddr);
+
+        if (exceptionAddr > addrBegain && exceptionAddr < addrEnd) {
+            printf("当前闪退在%s中\n", muduleName);
+            return true;
+        } else {
+            printf("当前闪退不在%s中\n", muduleName);
+            return false;
+        }
+    }
+}
+
+int
+PrintModules(DWORD processID)
+{
+    HMODULE hMods[1024];
+    HANDLE hProcess;
+    DWORD cbNeeded;
+    unsigned int i;
+
+    // Print the process identifier.
+
+    printf("\nProcess ID: %u\n", processID);
+
+    // Get a handle to the process.
+
+    hProcess = OpenProcess(
+        PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processID);
+    if (NULL == hProcess)
+        return 1;
+
+    // Get a list of all the modules in this process.
+
+    if (EnumProcessModules(hProcess, hMods, sizeof(hMods), &cbNeeded)) {
+        for (i = 0; i < (cbNeeded / sizeof(HMODULE)); i++) {
+            TCHAR szModName[MAX_PATH];
+
+            // Get the full path to the module's file.
+
+            if (GetModuleFileNameEx(hProcess, hMods[i], szModName,
+                    sizeof(szModName) / sizeof(TCHAR))) {
+                // Print the module name and handle value.
+                DWORD addrBegain = (DWORD)hMods[i];
+                printf(
+                    TEXT("\t%s (%p) (%lu)\n"), szModName, hMods[i], addrBegain);
+            }
+        }
+    }
+
+    // Release the handle to the process.
+
+    CloseHandle(hProcess);
+
+    return 0;
+}
+
+int
+processToModule()
+{
+
+    PrintModules(GetCurrentProcessId());
+
+    /*
+    DWORD aProcesses[1024];
+    DWORD cbNeeded;
+    DWORD cProcesses;
+    unsigned int i;
+
+    // Get the list of process identifiers.
+
+    if (!EnumProcesses(aProcesses, sizeof(aProcesses), &cbNeeded))
+        return 1;
+
+    // Calculate how many process identifiers were returned.
+
+    cProcesses = cbNeeded / sizeof(DWORD);
+
+    // Print the names of the modules for each process.
+
+    for (i = 0; i < cProcesses; i++) {
+        PrintModules(aProcesses[i]);
+    }*/
+
+    return 0;
+}
+
+bool
+isProcessThisCrash(
+    EXCEPTION_POINTERS *ExceptionInfo, const sentry_options_t *options)
+{
+    bool isProcess = false;
+    for (size_t i = 0; i < sentry_value_get_length(options->dllNames); i++) {
+        sentry_value_t value = sentry_value_get_by_index(options->dllNames, i);
+        const char *valueString = sentry_value_as_string(value);
+        isProcess = isCrashInThisModule(ExceptionInfo, valueString);
+        if (isProcess) {
+           break;
+       }
+    }
+    return isProcess;
+}
+
 #if defined(SENTRY_PLATFORM_LINUX) || defined(SENTRY_PLATFORM_WINDOWS)
 #    ifdef SENTRY_PLATFORM_WINDOWS
 static bool
-sentry__crashpad_handler(EXCEPTION_POINTERS *UNUSED(ExceptionInfo))
+sentry__crashpad_handler(EXCEPTION_POINTERS *ExceptionInfo)
 {
 #    else
 static bool
@@ -133,10 +285,25 @@ sentry__crashpad_handler(int UNUSED(signum), siginfo_t *UNUSED(info),
 #    endif
     SENTRY_DEBUG("flushing session and queue before crashpad handler");
 
-    SENTRY_WITH_OPTIONS (options) {
-        sentry__write_crash_marker(options);
+    // winpos: printer exception test
+    // printerCurrentReceiveException(ExceptionInfo);
 
+    bool isProcess = true;
+    SENTRY_WITH_OPTIONS (options) {
+        // winpos: check is process this crash
+        isProcess = isProcessThisCrash(ExceptionInfo, options);
+
+        // winpos: move ahead and add more information.can not analysize
         sentry_value_t event = sentry_value_new_event();
+        sentry_value_set_by_key(event, "isProcess",
+            isProcess ? sentry_value_new_string("true")
+                      : sentry_value_new_string("false"));
+
+        sentry_value_set_by_key(
+            event, "exceptionCode", sentry_value_new_int32(ExceptionInfo->ExceptionRecord->ExceptionCode));
+
+        sentry_value_set_by_key(event, "exceptionAddr", sentry__value_new_addr((DWORD)ExceptionInfo->ExceptionRecord->ExceptionAddress));
+
         if (options->before_send_func) {
             SENTRY_TRACE("invoking `before_send` hook");
             event = options->before_send_func(
@@ -144,22 +311,32 @@ sentry__crashpad_handler(int UNUSED(signum), siginfo_t *UNUSED(info),
         }
         sentry_value_decref(event);
 
-        sentry__record_errors_on_current_session(1);
-        sentry_session_t *session = sentry__end_current_session_with_status(
-            SENTRY_SESSION_STATUS_CRASHED);
-        if (session) {
-            sentry_envelope_t *envelope = sentry__envelope_new();
-            sentry__envelope_add_session(envelope, session);
+        if (isProcess) {
+            SENTRY_DEBUG("flushing session and queue before crashpad handler: isProcess == true");
+            sentry__write_crash_marker(options);
+            sentry__record_errors_on_current_session(1);
+            sentry_session_t *session = sentry__end_current_session_with_status(
+                SENTRY_SESSION_STATUS_CRASHED);
+            if (session) {
+                sentry_envelope_t *envelope = sentry__envelope_new();
+                sentry__envelope_add_session(envelope, session);
 
-            // capture the envelope with the disk transport
-            sentry_transport_t *disk_transport
-                = sentry_new_disk_transport(options->run);
-            sentry__capture_envelope(disk_transport, envelope);
-            sentry__transport_dump_queue(disk_transport, options->run);
-            sentry_transport_free(disk_transport);
+                // capture the envelope with the disk transport
+                sentry_transport_t *disk_transport
+                    = sentry_new_disk_transport(options->run);
+                sentry__capture_envelope(disk_transport, envelope);
+                sentry__transport_dump_queue(disk_transport, options->run);
+                sentry_transport_free(disk_transport);
+            }
+
+            sentry__transport_dump_queue(options->transport, options->run);
         }
+    }
 
-        sentry__transport_dump_queue(options->transport, options->run);
+    // winpos: if not check ...
+    if (!isProcess) {
+        SENTRY_DEBUG("flushing session and queue before crashpad handler: return true");
+        return true;
     }
 
     SENTRY_DEBUG("handing control over to crashpad");

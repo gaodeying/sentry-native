@@ -56,6 +56,8 @@ sentry_options_new(void)
     opts->traces_sample_rate = 0.0;
     opts->max_spans = 0;
 #endif
+    // winpos: 初始化dllNames
+    opts->dllNames =  sentry_value_new_list();
 
     return opts;
 }
@@ -312,6 +314,30 @@ sentry_options_set_shutdown_timeout(
     sentry_options_t *opts, uint64_t shutdown_timeout)
 {
     opts->shutdown_timeout = shutdown_timeout;
+}
+
+SENTRY_API void
+sentry_options_set_insertDllNameToNameList(sentry_options_t *opts, char *dllName) {
+    bool isAlreadyExists = false;
+    for (size_t i = 0; i < sentry_value_get_length(opts->dllNames); i++) {
+        sentry_value_t value = sentry_value_get_by_index(opts->dllNames, i);
+        char *valueString = sentry_value_as_string(value);
+        if (sentry__string_eq(dllName, valueString)) {
+            isAlreadyExists = true;
+            break;
+        }
+    }
+    if (isAlreadyExists == false) {
+        sentry_value_append(opts->dllNames, sentry_value_new_string(dllName));
+    }
+
+    for (size_t i = 0; i < sentry_value_get_length(opts->dllNames); i++) {
+        sentry_value_t value = sentry_value_get_by_index(opts->dllNames, i);
+        char *valueString = sentry_value_as_string(value);
+        printf(valueString);
+        printf("  ");
+    }
+    printf("\n \n");
 }
 
 uint64_t
